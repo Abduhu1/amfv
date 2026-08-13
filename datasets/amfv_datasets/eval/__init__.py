@@ -31,21 +31,10 @@ from amfv_datasets.eval.schema import (
     validate_case,
     validate_gold_set,
 )
-from amfv_datasets.eval.score import (
-    DEFAULT_SECTION_THRESHOLD,
-    DEFAULT_SIMILARITY_THRESHOLD,
-    Rate,
-    ScoreReport,
-    StageScores,
-    report_to_dict,
-    score_predictions,
-)
 
 __all__ = [
     "ANNOTATOR_SEED",
     "CoarseVerdict",
-    "DEFAULT_SECTION_THRESHOLD",
-    "DEFAULT_SIMILARITY_THRESHOLD",
     "EXPECTED_CASE_COUNT",
     "EXPECTED_CASES_PER_STRATUM",
     "EvalCase",
@@ -59,10 +48,7 @@ __all__ = [
     "PredictedEvidence",
     "Prediction",
     "PyramidTier",
-    "Rate",
     "Scope",
-    "ScoreReport",
-    "StageScores",
     "Stratum",
     "Verdict",
     "case_from_dict",
@@ -73,9 +59,7 @@ __all__ = [
     "load_gold_v0",
     "load_predictions_jsonl",
     "prediction_from_dict",
-    "report_to_dict",
     "requires_abstention",
-    "score_predictions",
     "validate_case",
     "validate_gold_set",
 ]

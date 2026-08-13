@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any, TextIO
@@ -232,7 +232,7 @@ class Prediction:
     """
 
     case_id: str
-    predicted_claims: tuple[PredictedClaim, ...] = field(default_factory=tuple)
+    predicted_claims: tuple[PredictedClaim, ...] = ()
 
 
 def coarse_verdict(verdict: Verdict) -> CoarseVerdict:

@@ -8,11 +8,13 @@ Workspace member (`amfv-datasets`).
 
 ## AMFV-Bench v0
 
-Stage-separated gold eval for decomposer, retrieval, and verifier. 48 NICE-grounded cases, eight per stratum, clinician-labelled. The scorer does not call a network or an LLM.
+Stage-separated gold eval for decomposer, retrieval, and verifier. 48 NICE-grounded cases, eight per stratum. The scorer does not call a network or an LLM. There is no LLM-as-judge.
 
-Read the annotation rubric before adding cases: [`amfv_datasets/eval/taxonomy.md`](amfv_datasets/eval/taxonomy.md).
+**Gold labels are clinician work.** Engineers score pipelines; they do not assign Likert verdicts. v0 is a seed (`annotator`: `seed-v0-clinician`) until a named clinician locks it and a second clinician grades independently. Rubric: [`amfv_datasets/eval/taxonomy.md`](amfv_datasets/eval/taxonomy.md).
 
-### Add a case
+If you are a physician and want to grade or second-read these cases, that is the intended next step — start from the rubric and `gold/v0.jsonl`.
+
+### Add a case (clinicians)
 
 1. Edit [`amfv_datasets/eval/gold/_v0.py`](amfv_datasets/eval/gold/_v0.py) (or append a JSON object to [`amfv_datasets/eval/gold/v0.jsonl`](amfv_datasets/eval/gold/v0.jsonl) if you are not regenerating).
 2. Keep quoted NICE spans at most 280 characters. Store `source_id`, URL, and section heading; do not paste chapters.
@@ -31,7 +33,7 @@ uv run python -m amfv_datasets.eval.gold._v0
 uv run pytest datasets/test/test_eval_schema.py datasets/test/test_eval_score.py
 ```
 
-v0 is frozen at 48 cases (eight per stratum). Further cases belong in a later split, not a silent expansion of `v0.jsonl`.
+v0 is frozen at 48 cases (eight per stratum). Further cases belong in a later split, not a silent expansion of `v0.jsonl`. Non-clinicians: propose `input_text` plus a NICE URL in an issue; do not edit gold verdicts.
 
 ### Score a pipeline
 
@@ -57,7 +59,7 @@ Write one JSON object per case:
 }
 ```
 
-`verdict` is the Med-V1 Likert: `-2` … `+2`. Retrieval is scored on `source_id` and `section`, not a chunk hash. Population-mismatch claims must be scored `0` (NEI), not supported.
+`verdict` is the Med-V1 Likert: `-2` … `+2`. Retrieval is scored on `source_id` and `section`, not a chunk hash. Population-mismatch claims must be scored `0` (NEI), not supported. Omitting `verdict` on a matched claim counts as a verifier miss. Omitting a population-mismatch claim counts as an abstention miss. Retrieval is not scored on `insufficient` cases (planted evidence is off-topic by design).
 
 ```bash
 uv run amfv-eval --predictions path/to/predictions.jsonl

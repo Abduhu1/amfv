@@ -2,6 +2,16 @@
 
 Hand this to a second clinician for independent grading. Labels are the measurement standard for decomposer, retrieval, and verifier PRs. Do not grade by vibe; grade against the cited NICE span.
 
+## Who labels
+
+Gold verdicts, scope, as-of dates, failure-mode tags, and quoted spans are **clinician work**. They are not a job for an LLM judge, a model’s parametric knowledge, or engineering intuition.
+
+- **Clinicians** grade each claim against the cited span, under the stated population and as-of date.
+- **Engineers** run pipelines and `amfv-eval`. They may propose `input_text` and a source URL. They do not set `verdict`, `scope`, or `failure_modes`.
+- v0 ships as a **seed** (`annotator`: `seed-v0-clinician`): protocol-complete draft labels, not a locked gold standard. A named clinician must lock the split. A second clinician then grades independently. Do not average Likert scores; adjudicate to one label.
+
+If you are a physician: read this rubric, grade `gold/v0.jsonl` (or a later split) under your own annotator id, and record disagreements on verdict, scope, or section. That is the highest-leverage contribution on this benchmark.
+
 ## Unit of annotation
 
 One **case** is a long-form `input_text` (`document`, `reasoning_trace`, or `model_output`) plus one or more **atomic claims**. Score claims, not the whole paragraph.
@@ -35,7 +45,7 @@ The AMFV cache key is “claim X is supported by evidence Y [under scope Z] as o
 
 ## Abstention (non-negotiable)
 
-If the retrieved source is the **wrong population** (adult guideline vs child; non-pregnant vs pregnant), the gold verdict is **0** and `failure_modes` includes `population_mismatch`. Do **not** mark +2 because the disease name matched. A pipeline that supports these cases has failed.
+If the retrieved source is the **wrong population** (adult guideline vs child; non-pregnant vs pregnant), the gold verdict is **0** and `failure_modes` includes `population_mismatch`. Do **not** mark +2 because the disease name matched. Cite a span from the mismatched source that does **not** already refute the claim (a contraindication quote is −2, a different stratum). A pipeline that supports these cases has failed.
 
 ## Temporal / superseded guidance
 
@@ -81,4 +91,4 @@ Tag every high-stakes probe. Multiple tags are allowed.
 
 ## Disagreement protocol
 
-A second annotator grades from this rubric and the same JSON schema. Record disagreements on verdict, scope, or section. Do not average Likert scores across annotators for v0; adjudicate to one gold label before the case enters the split.
+A second **clinician** grades from this rubric and the same JSON schema. Record disagreements on verdict, scope, or section. Do not average Likert scores across annotators; adjudicate to one gold label before treating the case as locked.

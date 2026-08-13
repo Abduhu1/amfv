@@ -18,7 +18,6 @@ from amfv_datasets.eval.schema import (
     Scope,
     Stratum,
     Verdict,
-    dump_jsonl,
     load_gold_v0,
     load_predictions_jsonl,
     prediction_from_dict,
@@ -181,8 +180,7 @@ def test_five_way_miss_can_still_match_coarse_verdict() -> None:
     assert report.overall.coarse_3way.value == 1.0
 
 
-def test_population_mismatch_must_abstain() -> None:
-    """Supporting an out-of-scope paediatric claim is an abstention failure."""
+def _mismatch_case() -> EvalCase:
     claim = GoldClaim(
         claim_id="c1",
         text="A 7-year-old with clinic BP 142/90 mmHg should use the adult ABPM pathway.",
@@ -193,16 +191,46 @@ def test_population_mismatch_must_abstain() -> None:
         evidence=(_EVIDENCE,),
         failure_modes=(FailureMode.POPULATION_MISMATCH, FailureMode.PEDIATRICS),
     )
-    case = _case(
+    return _case(
         stratum=Stratum.POPULATION_MISMATCH,
         input_text="A 7-year-old with clinic BP 142/90 mmHg should use the adult ABPM pathway.",
         gold_claims=(claim,),
     )
+
+
+def _oracle_predictions(cases: list[EvalCase] | tuple[EvalCase, ...]) -> list[Prediction]:
+    predictions = []
+    for case in cases:
+        predicted = tuple(
+            PredictedClaim(
+                text=claim.text,
+                atomicity_ok=True,
+                verdict=claim.verdict,
+                scope=claim.scope,
+                as_of=claim.as_of,
+                retrieved_evidence=tuple(
+                    PredictedEvidence(
+                        source_id=ref.source_id,
+                        section=ref.section,
+                        pyramid_tier=ref.pyramid_tier,
+                    )
+                    for ref in claim.evidence
+                ),
+            )
+            for claim in case.gold_claims
+        )
+        predictions.append(Prediction(case_id=case.case_id, predicted_claims=predicted))
+    return predictions
+
+
+def test_population_mismatch_must_abstain() -> None:
+    """Supporting an out-of-scope paediatric claim is an abstention failure."""
+    case = _mismatch_case()
     supported = _prediction(
-        claim.text,
+        case.gold_claims[0].text,
         verdict=Verdict.STRONG_AGREEMENT,
     )
-    abstained = _prediction(claim.text, verdict=Verdict.NEUTRAL)
+    abstained = _prediction(case.gold_claims[0].text, verdict=Verdict.NEUTRAL)
 
     failed = score_predictions([case], [supported])
     passed = score_predictions([case], [abstained])
@@ -211,61 +239,10 @@ def test_population_mismatch_must_abstain() -> None:
     assert passed.overall.scope_abstention.value == 1.0
 
 
-def test_oracle_on_v0_is_perfect(tmp_path: Path) -> None:
+def test_oracle_on_v0_is_perfect() -> None:
     """Copying gold claims into predictions scores 1.0 on every v0 rate."""
     cases = load_gold_v0()
-    predictions = []
-    for case in cases:
-        predicted = []
-        for claim in case.gold_claims:
-            predicted.append(
-                PredictedClaim(
-                    text=claim.text,
-                    atomicity_ok=True,
-                    verdict=claim.verdict,
-                    scope=claim.scope,
-                    as_of=claim.as_of,
-                    retrieved_evidence=tuple(
-                        PredictedEvidence(
-                            source_id=ref.source_id,
-                            section=ref.section,
-                            pyramid_tier=ref.pyramid_tier,
-                        )
-                        for ref in claim.evidence
-                    ),
-                )
-            )
-        predictions.append(Prediction(case_id=case.case_id, predicted_claims=tuple(predicted)))
-
-    path = tmp_path / "oracle.jsonl"
-    with path.open("w", encoding="utf-8") as handle:
-        dump_jsonl(
-            (
-                {
-                    "case_id": item.case_id,
-                    "predicted_claims": [
-                        {
-                            "text": claim.text,
-                            "atomicity_ok": claim.atomicity_ok,
-                            "verdict": int(claim.verdict) if claim.verdict is not None else None,
-                            "retrieved_evidence": [
-                                {
-                                    "source_id": ref.source_id,
-                                    "section": ref.section,
-                                    "pyramid_tier": ref.pyramid_tier.value if ref.pyramid_tier else None,
-                                }
-                                for ref in claim.retrieved_evidence
-                            ],
-                        }
-                        for claim in item.predicted_claims
-                    ],
-                }
-                for item in predictions
-            ),
-            handle,
-        )
-    loaded = load_predictions_jsonl(path)
-    report = score_predictions(cases, loaded)
+    report = score_predictions(cases, _oracle_predictions(cases))
 
     for rate in (
         report.overall.coverage,
@@ -309,3 +286,138 @@ def test_prediction_parser_accepts_fixture(tmp_path: Path) -> None:
     loaded = load_predictions_jsonl(path)
 
     assert loaded[0] == prediction_from_dict(payload)
+
+
+def test_negated_claim_does_not_match() -> None:
+    """Offer vs do-not-offer is a coverage miss, not a paraphrase hit."""
+    report = score_predictions(
+        [_case()],
+        [_prediction("Do not offer ABPM to adults with clinic BP 148/92 mmHg.")],
+    )
+
+    assert report.overall.coverage.value == 0.0
+
+
+def test_identifier_swap_does_not_match() -> None:
+    """QRISK3 vs QRISK2 must not pair as the same claim."""
+    claim = GoldClaim(
+        claim_id="c1",
+        text="Offer atorvastatin 20 mg when QRISK3 is 10% or more.",
+        atomicity_ok=True,
+        verdict=Verdict.STRONG_AGREEMENT,
+        scope=_SCOPE,
+        as_of="2026-08-13",
+        evidence=(_EVIDENCE,),
+    )
+    case = _case(
+        input_text="Offer atorvastatin 20 mg when QRISK3 is 10% or more.",
+        gold_claims=(claim,),
+    )
+    report = score_predictions(
+        [case],
+        [_prediction("Offer atorvastatin 20 mg when QRISK2 is 10% or more.")],
+    )
+
+    assert report.overall.coverage.value == 0.0
+
+
+def test_missing_verdict_counts_as_five_way_miss() -> None:
+    """A matched claim with verdict omitted still sits in the verifier denominator."""
+    report = score_predictions(
+        [_case()],
+        [_prediction("Adults with clinic BP 148/92 mmHg should be offered ABPM.", verdict=None)],
+    )
+
+    assert report.overall.coverage.value == 1.0
+    assert report.overall.exact_5way == report.overall.coarse_3way
+    assert report.overall.exact_5way.hits == 0
+    assert report.overall.exact_5way.total == 1
+
+
+def test_omitted_population_mismatch_claim_is_abstention_miss() -> None:
+    """Skipping a population-mismatch claim is an abstention failure, not a skip."""
+    case = _mismatch_case()
+    report = score_predictions([case], [])
+
+    assert report.overall.scope_abstention.hits == 0
+    assert report.overall.scope_abstention.total == 1
+
+
+def test_insufficient_decoy_retrieval_is_not_scored() -> None:
+    """Retrieving planted off-topic evidence on an insufficient case is not a hit."""
+    claim = GoldClaim(
+        claim_id="c1",
+        text="Laparoscopic TEP mesh repair is preferred for inguinal hernia.",
+        atomicity_ok=True,
+        verdict=Verdict.NEUTRAL,
+        scope=_SCOPE,
+        as_of="2026-08-13",
+        evidence=(_EVIDENCE,),
+    )
+    case = _case(stratum=Stratum.INSUFFICIENT, gold_claims=(claim,))
+    report = score_predictions(
+        [case],
+        [
+            _prediction(
+                "Laparoscopic TEP mesh repair is preferred for inguinal hernia.",
+                verdict=Verdict.NEUTRAL,
+            )
+        ],
+    )
+
+    assert report.overall.document_hit.total == 0
+    assert report.overall.section_hit.total == 0
+    assert report.overall.exact_5way.value == 1.0
+
+
+def test_unmatched_extra_claim_does_not_count_in_atomicity() -> None:
+    """Atomicity is scored only on predicted claims that cover gold."""
+    extra = PredictedClaim(text="Start immediate dual antiplatelet therapy after every nosebleed.")
+    matched = _prediction("Adults with clinic BP 148/92 mmHg should be offered ABPM.")
+    prediction = Prediction(case_id="case-1", predicted_claims=matched.predicted_claims + (extra,))
+
+    report = score_predictions([_case()], [prediction])
+
+    assert report.overall.atomicity.hits == 1
+    assert report.overall.atomicity.total == 1
+
+
+def test_merged_golds_fail_atomicity() -> None:
+    """One predicted claim that covers two gold claims is not atomic."""
+    first = GoldClaim(
+        claim_id="c1",
+        text="Adults with clinic BP 148/92 mmHg should be offered ABPM.",
+        atomicity_ok=True,
+        verdict=Verdict.STRONG_AGREEMENT,
+        scope=_SCOPE,
+        as_of="2026-08-13",
+        evidence=(_EVIDENCE,),
+    )
+    second = GoldClaim(
+        claim_id="c2",
+        text="Adults with clinic BP 148/92 mmHg should be offered HBPM.",
+        atomicity_ok=True,
+        verdict=Verdict.STRONG_AGREEMENT,
+        scope=_SCOPE,
+        as_of="2026-08-13",
+        evidence=(_EVIDENCE,),
+    )
+    case = _case(gold_claims=(first, second))
+    report = score_predictions(
+        [case],
+        [
+            _prediction(
+                "Adults with clinic BP 148/92 mmHg should be offered ABPM and HBPM.",
+            )
+        ],
+    )
+
+    assert report.overall.atomicity.value == 0.0
+
+
+def test_identifier_digits_are_not_input_numbers() -> None:
+    """Digits inside QRISK3 are not a licence to emit a standalone 3."""
+    case = _case(input_text="Discuss QRISK3 before offering ABPM.")
+    report = score_predictions([case], [_prediction("Offer ABPM if the score is 3.")])
+
+    assert report.overall.faithfulness.value == 0.0

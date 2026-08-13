@@ -6,12 +6,13 @@ token Jaccard. Retrieval is scored at document and section level, not chunk id.
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -22,6 +23,7 @@ from amfv_datasets.eval.schema import (
     PredictedClaim,
     PredictedEvidence,
     Prediction,
+    Stratum,
     coarse_verdict,
     load_gold_jsonl,
     load_gold_v0,
@@ -59,10 +61,40 @@ _STOPWORDS = frozenset(
         "without",
     }
 )
-_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+# Standalone numbers only. Digits inside identifiers (QRISK3, NG136) must not count.
+_NUMBER_RE = re.compile(r"(?<![a-z0-9])-?\d+(?:\.\d+)?(?![a-z0-9])")
 _NON_TOKEN_RE = re.compile(r"[^a-z0-9.\s%/-]+")
+# Keep 0.6; drop the trailing dot on "ABPM." so it does not become a distinct token.
+_NON_DECIMAL_DOT_RE = re.compile(r"(?<!\d)\.|\.(?!\d)")
 _WHITESPACE_RE = re.compile(r"\s+")
 _BP_RE = re.compile(r"\bbp\b")
+_NEGATION_RE = re.compile(r"\b(?:not|never|no|dont|without|avoid)\b")
+_COUNTER_NAMES = frozenset(
+    {
+        "coverage_hits",
+        "coverage_total",
+        "precision_hits",
+        "precision_total",
+        "faithful_hits",
+        "faithful_total",
+        "atomicity_hits",
+        "atomicity_total",
+        "document_hits",
+        "document_total",
+        "section_hits",
+        "section_total",
+        "recency_hits",
+        "recency_total",
+        "tier_hits",
+        "tier_total",
+        "exact_hits",
+        "exact_total",
+        "coarse_hits",
+        "coarse_total",
+        "abstention_hits",
+        "abstention_total",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -136,8 +168,9 @@ def score_predictions(
         cases: Gold cases.
         predictions: Pipeline outputs. Extra case ids are ignored; missing
             case ids count as empty predictions.
-        similarity_threshold: Minimum of token Jaccard or difflib sequence
-            ratio to match a predicted claim to a gold claim (default: 0.45).
+        similarity_threshold: Minimum token Jaccard to match a predicted claim
+            to a gold claim. Polar negation or letter-digit identifier swaps
+            never match (default: 0.45).
         section_threshold: Minimum token Jaccard to count a section hit
             (default: 0.5).
     """
@@ -196,31 +229,30 @@ def report_to_dict(report: ScoreReport) -> dict[str, object]:
     }
 
 
-def main(
-    predictions: Path = typer.Option(..., "--predictions", "-p", help="JSONL of pipeline predictions."),
-    gold: Path | None = typer.Option(None, "--gold", "-g", help="Gold JSONL. Defaults to AMFV-Bench v0."),
-    similarity_threshold: float = typer.Option(
-        DEFAULT_SIMILARITY_THRESHOLD,
-        "--similarity-threshold",
-        help="Minimum token Jaccard for claim matching.",
-    ),
+def _score_cli(
+    predictions: Annotated[
+        Path,
+        typer.Option("--predictions", "-p", help="JSONL of pipeline predictions."),
+    ],
+    gold: Annotated[
+        Path | None,
+        typer.Option("--gold", "-g", help="Gold JSONL. Defaults to AMFV-Bench v0."),
+    ] = None,
+    similarity_threshold: Annotated[
+        float,
+        typer.Option("--similarity-threshold", help="Minimum token Jaccard for claim matching."),
+    ] = DEFAULT_SIMILARITY_THRESHOLD,
 ) -> None:
     """Score a predictions JSONL against AMFV-Bench gold."""
     cases = load_gold_jsonl(gold) if gold is not None else load_gold_v0()
     parsed = load_predictions_jsonl(predictions)
     report = score_predictions(cases, parsed, similarity_threshold=similarity_threshold)
-    typer.echo(json_dumps(report_to_dict(report)))
+    typer.echo(json.dumps(report_to_dict(report), indent=2, sort_keys=True))
 
 
-def json_dumps(payload: object) -> str:
-    """Serialize scores with stable key order.
-
-    Args:
-        payload: JSON-ready object.
-    """
-    import json
-
-    return json.dumps(payload, indent=2, sort_keys=True)
+def main() -> None:
+    """Run the AMFV-Bench scoring CLI."""
+    typer.run(_score_cli)
 
 
 class _Counters:
@@ -293,33 +325,35 @@ def _score_case(
     gold_by_predicted = _golds_covered_by_predicted(case.gold_claims, prediction.predicted_claims, similarity_threshold)
     for predicted in prediction.predicted_claims:
         covered = gold_by_predicted.get(id(predicted), ())
-        if predicted.atomicity_ok is None and len(covered) <= 1:
+        if not covered:
             continue
         _add(overall, stratum, "atomicity_total", 1)
-        atomic = (predicted.atomicity_ok is not False) and len(covered) <= 1
-        if atomic:
+        if len(covered) == 1:
             _add(overall, stratum, "atomicity_hits", 1)
 
     for gold, predicted in pairs:
-        _score_retrieval(
-            gold,
-            predicted,
-            overall=overall,
-            stratum=stratum,
-            section_threshold=section_threshold,
-        )
-        if predicted.verdict is None:
-            continue
+        if case.stratum is not Stratum.INSUFFICIENT:
+            _score_retrieval(
+                gold,
+                predicted,
+                overall=overall,
+                stratum=stratum,
+                section_threshold=section_threshold,
+            )
         _add(overall, stratum, "exact_total", 1)
         _add(overall, stratum, "coarse_total", 1)
         if predicted.verdict is gold.verdict:
             _add(overall, stratum, "exact_hits", 1)
-        if coarse_verdict(predicted.verdict) is coarse_verdict(gold.verdict):
+        if predicted.verdict is not None and coarse_verdict(predicted.verdict) is coarse_verdict(gold.verdict):
             _add(overall, stratum, "coarse_hits", 1)
         if requires_abstention(gold):
             _add(overall, stratum, "abstention_total", 1)
-            if coarse_verdict(predicted.verdict) is CoarseVerdict.NEI:
+            if predicted.verdict is not None and coarse_verdict(predicted.verdict) is CoarseVerdict.NEI:
                 _add(overall, stratum, "abstention_hits", 1)
+
+    for gold in case.gold_claims:
+        if gold.claim_id not in matched_gold and requires_abstention(gold):
+            _add(overall, stratum, "abstention_total", 1)
 
 
 def _score_retrieval(
@@ -345,9 +379,7 @@ def _score_retrieval(
 
     if replaced_ids:
         _add(overall, stratum, "recency_total", 1)
-        retrieved_current = bool(predicted_source_ids & gold_source_ids)
-        retrieved_only_withdrawn = bool(predicted_source_ids & replaced_ids) and not retrieved_current
-        if retrieved_current and not retrieved_only_withdrawn:
+        if predicted_source_ids & gold_source_ids:
             _add(overall, stratum, "recency_hits", 1)
 
     predicted_tiers = [item.pyramid_tier for item in predicted.retrieved_evidence if item.pyramid_tier is not None]
@@ -412,9 +444,15 @@ def _section_hit(
 
 
 def _claim_similarity(left: str, right: str) -> float:
-    token_score = _jaccard(_tokenize(left), _tokenize(right))
-    sequence_score = SequenceMatcher(None, _normalize(left), _normalize(right)).ratio()
-    return max(token_score, sequence_score)
+    # Character overlap treats "offer aspirin" and "do not offer aspirin" as
+    # near-duplicates. Require matching polarity and letter-digit codes first.
+    if _is_negated(left) != _is_negated(right):
+        return 0.0
+    left_tokens = _tokenize(left)
+    right_tokens = _tokenize(right)
+    if _code_tokens(left_tokens) != _code_tokens(right_tokens):
+        return 0.0
+    return _jaccard(left_tokens, right_tokens)
 
 
 def _is_faithful(predicted_text: str, input_text: str) -> bool:
@@ -429,10 +467,21 @@ def _tokenize(value: str) -> frozenset[str]:
     return frozenset(token for token in _normalize(value).split() if token and token not in _STOPWORDS)
 
 
+def _code_tokens(tokens: frozenset[str]) -> frozenset[str]:
+    return frozenset(
+        token for token in tokens if any(char.isalpha() for char in token) and any(char.isdigit() for char in token)
+    )
+
+
+def _is_negated(value: str) -> bool:
+    return _NEGATION_RE.search(_normalize(value)) is not None
+
+
 def _normalize(value: str) -> str:
     text = unicodedata.normalize("NFKC", value).casefold()
     text = text.replace("mm hg", "mmhg")
     text = _BP_RE.sub("blood pressure", text)
+    text = _NON_DECIMAL_DOT_RE.sub(" ", text)
     text = _NON_TOKEN_RE.sub(" ", text)
     return _WHITESPACE_RE.sub(" ", text).strip()
 
@@ -446,6 +495,8 @@ def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
 
 
 def _add(overall: _Counters, stratum: _Counters, name: str, amount: int) -> None:
+    if name not in _COUNTER_NAMES:
+        raise AttributeError(name)
     setattr(overall, name, getattr(overall, name) + amount)
     setattr(stratum, name, getattr(stratum, name) + amount)
 
@@ -470,34 +521,8 @@ def _rate_to_dict(rate: Rate) -> dict[str, float | int | None]:
     return {"hits": rate.hits, "total": rate.total, "value": rate.value}
 
 
-app = typer.Typer(help="Score AMFV-Bench predictions.", invoke_without_command=True)
-
-
-@app.callback(invoke_without_command=True)
-def _cli_entry(
-    ctx: typer.Context,
-    predictions: Path | None = typer.Option(None, "--predictions", "-p", help="JSONL of pipeline predictions."),
-    gold: Path | None = typer.Option(None, "--gold", "-g", help="Gold JSONL. Defaults to AMFV-Bench v0."),
-    similarity_threshold: float = typer.Option(
-        DEFAULT_SIMILARITY_THRESHOLD,
-        "--similarity-threshold",
-        help="Minimum token Jaccard for claim matching.",
-    ),
-) -> None:
-    if ctx.invoked_subcommand is not None:
-        return
-    if predictions is None:
-        raise typer.BadParameter("--predictions is required")
-    main(predictions=predictions, gold=gold, similarity_threshold=similarity_threshold)
-
-
-def run() -> None:
-    """Run the Typer scoring CLI."""
-    app()
-
-
 if __name__ == "__main__":
-    run()
+    main()
 
 
 __all__ = [
@@ -506,10 +531,7 @@ __all__ = [
     "Rate",
     "ScoreReport",
     "StageScores",
-    "app",
-    "json_dumps",
     "main",
     "report_to_dict",
-    "run",
     "score_predictions",
 ]

@@ -176,14 +176,6 @@ def cases() -> list[EvalCase]:
         "Offer advice on healthy living in line with the NHS information on healthy living to people who have raised blood pressure but have not been diagnosed with hypertension. [2026]",
         published_or_updated="2026-02-26",
     )
-    ng136_pregnancy_note = _ev(
-        "nice-ng136",
-        "https://www.nice.org.uk/guidance/ng136/chapter/Recommendations",
-        NG136,
-        "Choosing antihypertensive drug treatment",
-        "ACE inhibitors and angiotensin II receptor antagonists should not be used in pregnant or breastfeeding women or women planning pregnancy unless absolutely necessary.",
-        published_or_updated="2026-02-26",
-    )
     ng136_overview = _ev(
         "nice-ng136",
         "https://www.nice.org.uk/guidance/ng136",
@@ -881,12 +873,12 @@ def cases() -> list[EvalCase]:
                 "Ramipril should be started as step 1 treatment for chronic hypertension in pregnancy because ACE inhibitors are first-line in adults.",
                 Verdict.NEUTRAL,
                 Scope("pregnant women", "chronic hypertension in pregnancy", "maternity care"),
-                ng136_pregnancy_note,
+                ng136_step1,
                 FailureMode.POPULATION_MISMATCH,
                 FailureMode.PREGNANCY,
                 FailureMode.CONTRAINDICATION,
             ),
-            "Adult step 1 ACEI does not transfer to pregnancy; abstain on NG136, use NG133.",
+            "Adult step-1 ACE/ARB offer does not apply in pregnancy; abstain, do not refute from NG136. Use NG133.",
         ),
         _case(
             "amfv-v0-pm-04",

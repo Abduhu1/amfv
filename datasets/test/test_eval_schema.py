@@ -17,6 +17,7 @@ from amfv_datasets.eval.schema import (
     case_to_dict,
     load_gold_v0,
     validate_case,
+    validate_gold_set,
 )
 
 
@@ -65,6 +66,16 @@ def test_v0_stratum_labels_match_contract(
             assert claim.verdict is verdict
             if mode is not None:
                 assert mode in claim.failure_modes
+
+
+def test_v0_generator_matches_shipped_jsonl() -> None:
+    """Regenerating from `_v0.py` must equal the committed JSONL."""
+    from amfv_datasets.eval.gold._v0 import cases
+
+    generated = [case_to_dict(case) for case in validate_gold_set(cases())]
+    shipped = [case_to_dict(case) for case in load_gold_v0()]
+
+    assert generated == shipped
 
 
 def test_case_json_roundtrip() -> None:
