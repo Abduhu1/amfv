@@ -19,6 +19,7 @@ import typer
 from amfv_datasets.eval.schema import (
     CoarseVerdict,
     EvalCase,
+    EvidenceRef,
     GoldClaim,
     PredictedClaim,
     PredictedEvidence,
@@ -365,7 +366,6 @@ def _score_retrieval(
     section_threshold: float,
 ) -> None:
     gold_source_ids = {ref.source_id for ref in gold.evidence}
-    gold_sections = [ref.section for ref in gold.evidence]
     replaced_ids = {ref.replaces for ref in gold.evidence if ref.replaces}
     predicted_source_ids = {item.source_id for item in predicted.retrieved_evidence}
 
@@ -374,7 +374,7 @@ def _score_retrieval(
         _add(overall, stratum, "document_hits", 1)
 
     _add(overall, stratum, "section_total", 1)
-    if _section_hit(gold_sections, predicted.retrieved_evidence, section_threshold):
+    if _section_hit(gold.evidence, predicted.retrieved_evidence, section_threshold):
         _add(overall, stratum, "section_hits", 1)
 
     if replaced_ids:
@@ -428,17 +428,16 @@ def _golds_covered_by_predicted(
 
 
 def _section_hit(
-    gold_sections: Sequence[str],
+    gold_evidence: Sequence[EvidenceRef],
     predicted_evidence: Sequence[PredictedEvidence],
     section_threshold: float,
 ) -> bool:
-    predicted_sections = [item.section for item in predicted_evidence if item.section]
-    if not predicted_sections:
-        return False
-    for gold_section in gold_sections:
-        gold_tokens = _tokenize(gold_section)
-        for predicted_section in predicted_sections:
-            if _jaccard(gold_tokens, _tokenize(predicted_section)) >= section_threshold:
+    for gold_item in gold_evidence:
+        gold_tokens = _tokenize(gold_item.section)
+        for predicted_item in predicted_evidence:
+            if predicted_item.source_id != gold_item.source_id or not predicted_item.section:
+                continue
+            if _jaccard(gold_tokens, _tokenize(predicted_item.section)) >= section_threshold:
                 return True
     return False
 

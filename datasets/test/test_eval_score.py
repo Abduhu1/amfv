@@ -148,6 +148,23 @@ def test_wrong_section_is_document_hit_without_section_hit() -> None:
     assert report.overall.section_hit.value == 0.0
 
 
+def test_matching_section_in_wrong_document_is_not_section_hit() -> None:
+    """A matching heading from another guideline is not a section hit."""
+    report = score_predictions(
+        [_case()],
+        [
+            _prediction(
+                "Adults with clinic BP 148/92 mmHg should be offered ABPM.",
+                source_id="nice-ng238",
+                section="Diagnosing hypertension",
+            )
+        ],
+    )
+
+    assert report.overall.document_hit.value == 0.0
+    assert report.overall.section_hit.value == 0.0
+
+
 def test_superseded_source_fails_recency() -> None:
     """Retrieving only a withdrawn guideline is a recency miss."""
     report = score_predictions(
