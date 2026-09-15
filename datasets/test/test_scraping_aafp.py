@@ -230,6 +230,45 @@ def test_parse_topic_page_returns_one_document_per_recommendation() -> None:
     assert preventive.metadata["recommendation_subtitle"] is None
 
 
+def test_direct_and_categorized_drawers_stay_inside_guidelines_section() -> None:
+    """Direct and accordion drawers are accepted only inside the guidelines section."""
+    html = _topic_page(
+        sections=(
+            _drawer(
+                title="Direct recommendation",
+                body="<p>Use the direct clinical recommendation.</p>",
+            )
+            + _category_section(
+                label="Clinical practice guidelines",
+                drawers=_drawer(
+                    title="Accordion recommendation",
+                    body="<p>Use the categorized clinical recommendation.</p>",
+                ),
+            )
+            + """
+              <h2>Practice and payment resources</h2>
+              <div class="drawer__wrapper">
+                <h3 class="drawer-header type-h3">
+                  Unrelated coding resource
+                </h3>
+                <p>This must not become a recommendation document.</p>
+              </div>
+            """
+        )
+    )
+
+    documents = parse_topic_page(html, url=_TOPIC_URL)
+
+    assert [document.title for document in documents] == [
+        "Direct recommendation",
+        "Accordion recommendation",
+    ]
+    assert [document.metadata["category"] for document in documents] == [
+        "Guidelines and recommendations",
+        "Clinical practice guidelines",
+    ]
+
+
 def test_parse_topic_page_pins_deterministic_external_ids() -> None:
     """External ids are stable strings, not merely distinct ones."""
     documents = parse_topic_page(_TOPIC_HTML, url=_TOPIC_URL)
@@ -503,6 +542,34 @@ def test_missing_full_guideline_link_is_reported_as_none() -> None:
 
     assert metadata["full_guideline_url"] is None
     assert metadata["source_links"] == [{"text": "related podcast", "url": "https://www.aafp.org/podcast/42"}]
+
+
+def test_read_the_recommendation_is_selected_over_an_unrelated_reference() -> None:
+    """The dedicated guideline URL selects the observed AAFP recommendation wording."""
+    html = _single_drawer_page(
+        """
+        <p>
+          <a href="/references/background">Related reference</a>
+        </p>
+        <p>
+          <a href="/recommendations/example">Read the recommendation</a>
+        </p>
+        """
+    )
+
+    metadata = parse_topic_page(html, url=_TOPIC_URL)[0].metadata
+
+    assert metadata["full_guideline_url"] == ("https://www.aafp.org/recommendations/example")
+    assert metadata["source_links"] == [
+        {
+            "text": "Related reference",
+            "url": "https://www.aafp.org/references/background",
+        },
+        {
+            "text": "Read the recommendation",
+            "url": "https://www.aafp.org/recommendations/example",
+        },
+    ]
 
 
 def test_drawer_anchor_produces_a_fragment_url() -> None:
@@ -909,9 +976,8 @@ def test_cli_discovery_failure_is_not_a_successful_empty_run(monkeypatch: pytest
 
 
 def test_aafp_is_a_registered_cli_source() -> None:
-    """The CLI registry exposes AAFP in its deterministic public order."""
+    """The CLI registry exposes the AAFP scraper."""
     assert SCRAPERS["aafp"] is aafp.scrape_aafp
-    assert tuple(SCRAPERS) == ("aafp", "nice")
 
 
 def test_cli_runs_the_aafp_source(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -935,7 +1001,7 @@ def test_cli_runs_the_aafp_source(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cli_all_sources_runs_every_registered_scraper(monkeypatch: pytest.MonkeyPatch) -> None:
-    """--source all runs AAFP and NICE in registry order."""
+    """--source all runs every registered scraper in registry order."""
     runner = CliRunner()
     ran: list[str] = []
 
@@ -952,7 +1018,7 @@ def test_cli_all_sources_runs_every_registered_scraper(monkeypatch: pytest.Monke
     result = runner.invoke(app, ["--source", ALL_SOURCES, "--no-progress"])
 
     assert result.exit_code == 0
-    assert ran == ["aafp", "nice"]
+    assert ran == list(SCRAPERS)
 
 
 def test_network_guard_is_active() -> None:

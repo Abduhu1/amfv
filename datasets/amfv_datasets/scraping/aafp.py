@@ -121,7 +121,10 @@ _STATUS_SEGMENT_RES = tuple(
     for status, pattern in _STATUS_PATTERNS
 )
 _REAFFIRMED_SPLIT_RE = re.compile(r",\s*(?=reaffirmed\b)", re.IGNORECASE)
-_FULL_SOURCE_LINK_RE = re.compile(r"full\s+(?:guideline|guidance|recommendation|report|statement)", re.IGNORECASE)
+_FULL_SOURCE_LINK_RE = re.compile(
+    r"(?:full\s+(?:guideline|guidance|recommendation|report|statement)|read\s+the\s+recommendation)",
+    re.IGNORECASE,
+)
 # ‐-― covers hyphen, en dash, em dash and horizontal bar.
 _SLUG_SEPARATOR_RE = re.compile(r"[\s‐-―/\\_,]+")
 _SLUG_DROP_RE = re.compile(r"[^a-z0-9-]+")
@@ -472,23 +475,25 @@ def _has_guidelines_section(main: lxml_html.HtmlElement) -> bool:
 
 
 def _category_drawers(main: lxml_html.HtmlElement) -> Iterator[tuple[str, lxml_html.HtmlElement]]:
-    """Yield (category label, drawer wrapper) pairs in page order.
+    """Yield recommendation drawers while excluding unrelated page sections.
 
-    An accepted accordion heading opens a category, and any following `h2` ends
-    it, which is what keeps the "Practice and payment resources" drawers and
-    other unrelated page sections out.
+    The guidelines heading supplies a fallback category for drawers placed
+    directly beneath it. An accepted accordion heading supplies a more specific
+    category. Any unrelated h2 closes the active category.
     """
     category: str | None = None
+
     for element in main.iter():
         if not isinstance(element.tag, str):
             continue
-        if _has_class(element, "accordion__heading"):
+
+        if element.tag == "h2":
+            heading = clean_text(element.text_content())
+            category = heading if _normalized(heading) == _GUIDELINES_HEADING else None
+        elif _has_class(element, "accordion__heading"):
             category = _accepted_category(element.text_content())
-        elif _has_class(element, "drawer__wrapper"):
-            if category is not None:
-                yield category, element
-        elif element.tag == "h2":
-            category = None
+        elif _has_class(element, "drawer__wrapper") and category is not None:
+            yield category, element
 
 
 def _drawer_header(wrapper: lxml_html.HtmlElement) -> lxml_html.HtmlElement | None:

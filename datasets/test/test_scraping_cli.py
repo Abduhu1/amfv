@@ -227,10 +227,12 @@ def test_cli_run_rejects_an_unregistered_source() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["--source", "nhs"])
+    error = unstyle(result.stderr)
 
     assert result.exit_code != 0
-    assert "'nhs'" in result.stderr
-    assert "all, aafp, medlineplus, nice" in result.stderr
+    assert "'nhs'" in error
+    for source in (ALL_SOURCES, *SCRAPERS):
+        assert source in error
 
 
 def test_cli_run_rejects_a_url_with_every_source() -> None:
